@@ -26,7 +26,6 @@ const App: React.FC = () => {
   const [isSharing, setIsSharing] = useState<boolean>(false);
   const [fileName, setFileName] = useState<string>("screen-recording"); // Default file name
   const partNumberRef = useRef<number>(1); // Track part number
-  const MAX_TIME = 1200;
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const myVideo = useRef<HTMLVideoElement>(null);
@@ -66,7 +65,7 @@ const App: React.FC = () => {
     setTimer(0); // Reset the timer
     timerRef.current = setInterval(() => {
       setTimer((prev) => {
-        if (prev >= MAX_TIME) {
+        if (prev >= maxTime && maxTime != 0) {
           // 600 seconds = 10 minutes (currently set to 5 seconds for testing)
           stopRecordingAndStartNewPart(); // Stop and start new part
           return 0; // Reset timer for new part
@@ -129,7 +128,7 @@ const App: React.FC = () => {
       } else {
         clearInterval(dataRequestInterval); // Clear interval if not recording
       }
-    }, 10000); // Adjust interval as needed
+    }, 5 * 1000); // 5 seconds update
 
     mediaRecorder.ondataavailable = (event: BlobEvent) => {
       if (event.data.size > 0) {
@@ -245,8 +244,8 @@ const App: React.FC = () => {
         </Grid>
       </Grid>
 
-      <video ref={myVideo} autoPlay muted style={{ width: "500px" }}></video>
-      <video ref={remoteVideo} autoPlay style={{ width: "500px" }}></video>
+      <video ref={myVideo} autoPlay muted style={{ width: "700px" }}></video>
+      <video ref={remoteVideo} autoPlay style={{ width: "700px" }}></video>
       <Box mt={2}>
         <Typography variant="h6">
           Recording Timer:{" "}
