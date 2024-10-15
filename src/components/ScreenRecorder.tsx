@@ -33,9 +33,12 @@ const App: React.FC = () => {
   const peerInstance = useRef<Peer | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunks = useRef<Blob[]>([]);
+  const audioCtx = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     const peer = new Peer();
+    audioCtx.current = new (window.AudioContext ||
+      (window as any).webkitAudioContext)();
 
     peer.on("open", (id: string) => {
       setPeerId(id);
@@ -93,16 +96,44 @@ const App: React.FC = () => {
         // Get user media for microphone audio
         navigator.mediaDevices
           .getUserMedia({ audio: true })
-          .then((micStream) => {
-            // Combine the audio tracks from screen and microphone
-            const combinedStream = new MediaStream([
-              ...screenStream.getTracks(),
-              ...micStream.getTracks(),
-            ]);
+          .then(async (micStream) => {
+            if (!audioCtx.current) {
+              audioCtx.current = new (window.AudioContext ||
+                (window as any).webkitAudioContext)();
+            }
+            const audioContext = audioCtx.current;
+            if (audioContext.state === "suspended") {
+              await audioContext.resume();
+            }
+
+            const dest = audioContext.createMediaStreamDestination();
+
+            // Create MediaStreamSources from mic and screen audio tracks
+            const micSource = audioContext.createMediaStreamSource(micStream);
+            const screenSource =
+              audioContext.createMediaStreamSource(screenStream);
+
+            // Connect the sources to the destination
+            micSource.connect(dest);
+            screenSource.connect(dest);
+
+            // Create a new stream with video tracks from screen and audio track from destination
+            const combinedStream = new MediaStream();
+
+            // Add the screen video tracks
+            screenStream.getVideoTracks().forEach((track) => {
+              combinedStream.addTrack(track);
+            });
+
+            // Add the combined audio track
+            dest.stream.getAudioTracks().forEach((track) => {
+              combinedStream.addTrack(track);
+            });
 
             if (myVideo.current) {
               myVideo.current.srcObject = combinedStream;
             }
+
             startRecording(combinedStream); // Start recording with the combined stream
             startTimer(); // Start the timer
             setIsSharing(true);
@@ -119,8 +150,14 @@ const App: React.FC = () => {
 
   const startRecording = (stream: MediaStream) => {
     recordedChunks.current = [];
+    const options = { mimeType: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' }; // Include 'opus' for audio
+    if (MediaRecorder.isTypeSupported(options.mimeType)) {
+      console.log("Codec supported");
+    } else {
+      console.log("Codec not supported");
+    }
 
-    const mediaRecorder = new MediaRecorder(stream);
+    const mediaRecorder = new MediaRecorder(stream, options);
 
     const dataRequestInterval = setInterval(() => {
       if (mediaRecorder && mediaRecorder.state === "recording") {
@@ -146,7 +183,7 @@ const App: React.FC = () => {
       }
     };
 
-    mediaRecorder.start();
+    mediaRecorder.start(250);
     mediaRecorderRef.current = mediaRecorder;
   };
 
