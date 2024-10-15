@@ -14,10 +14,23 @@ import {
 import Peer, { MediaConnection } from "peerjs";
 import React, { useEffect, useState, useRef } from "react";
 
+// Utility functions
+const formatBytes = (bytes: number, decimals = 2) => {
+  if (bytes === 0) return "0 Bytes";
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
+};
+
+const mimeType = "video/webm; codecs=vp8,opus";
+const options = { mimeType };
+
 const App: React.FC = () => {
   const [peerId, setPeerId] = useState<string | null>(null);
 
-  const [maxTime, setMaxTime] = useState<number>(0); // Initial max time is 20 minutes (1200 seconds)
+  const [maxTime, setMaxTime] = useState<number>(0); // Initial max time is "No Limit"
   const recordingSizeRef = useRef<number>(0);
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -68,9 +81,9 @@ const App: React.FC = () => {
     setTimer(0); // Reset the timer
     timerRef.current = setInterval(() => {
       setTimer((prev) => {
-        if (prev >= maxTime && maxTime != 0) {
-          // 600 seconds = 10 minutes (currently set to 5 seconds for testing)
-          stopRecordingAndStartNewPart(); // Stop and start new part
+        if (prev >= maxTime && maxTime !== 0) {
+          // Stop and start new part when maxTime is reached
+          stopRecordingAndStartNewPart();
           return 0; // Reset timer for new part
         }
         return prev + 1;
@@ -84,73 +97,82 @@ const App: React.FC = () => {
     }
   };
 
-  const startCall = () => {
-    // Reset the part number when starting a new session
-    partNumberRef.current = 1;
-    recordingSizeRef.current = 0;
+  const startCall = async () => {
+    try {
+      // Reset the part number when starting a new session
+      partNumberRef.current = 1;
+      recordingSizeRef.current = 0;
 
-    // Get display media with system audio
-    navigator.mediaDevices
-      .getDisplayMedia({ video: true, audio: true })
-      .then((screenStream) => {
-        // Get user media for microphone audio
-        navigator.mediaDevices
-          .getUserMedia({ audio: true })
-          .then(async (micStream) => {
-            if (!audioCtx.current) {
-              audioCtx.current = new (window.AudioContext ||
-                (window as any).webkitAudioContext)();
-            }
-            const audioContext = audioCtx.current;
-            if (audioContext.state === "suspended") {
-              await audioContext.resume();
-            }
+      // Get display media with system audio
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
 
-            const dest = audioContext.createMediaStreamDestination();
+      // Get user media for microphone audio
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
 
-            // Create MediaStreamSources from mic and screen audio tracks
-            const micSource = audioContext.createMediaStreamSource(micStream);
-            const screenSource =
-              audioContext.createMediaStreamSource(screenStream);
+      if (!audioCtx.current) {
+        audioCtx.current = new (window.AudioContext ||
+          (window as any).webkitAudioContext)();
+      }
+      const audioContext = audioCtx.current;
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
 
-            // Connect the sources to the destination
-            micSource.connect(dest);
-            screenSource.connect(dest);
+      const dest = audioContext.createMediaStreamDestination();
 
-            // Create a new stream with video tracks from screen and audio track from destination
-            const combinedStream = new MediaStream();
+      // Create MediaStreamSources from mic and screen audio tracks
+      const micSource = audioContext.createMediaStreamSource(micStream);
+      const screenSource = audioContext.createMediaStreamSource(screenStream);
 
-            // Add the screen video tracks
-            screenStream.getVideoTracks().forEach((track) => {
-              combinedStream.addTrack(track);
-            });
+      // Connect the sources to the destination
+      micSource.connect(dest);
+      screenSource.connect(dest);
 
-            // Add the combined audio track
-            dest.stream.getAudioTracks().forEach((track) => {
-              combinedStream.addTrack(track);
-            });
+      // Create a new stream with video tracks from screen and audio track from destination
+      const combinedStream = new MediaStream();
 
-            if (myVideo.current) {
-              myVideo.current.srcObject = combinedStream;
-            }
+      // Add the screen video tracks
+      screenStream.getVideoTracks().forEach((track) => {
+        combinedStream.addTrack(track);
+      });
 
-            startRecording(combinedStream); // Start recording with the combined stream
-            startTimer(); // Start the timer
-            setIsSharing(true);
+      // Add the combined audio track
+      dest.stream.getAudioTracks().forEach((track) => {
+        combinedStream.addTrack(track);
+      });
 
-            // Stop sharing automatically when the user stops sharing the screen
-            screenStream.getVideoTracks()[0].onended = () => {
-              endCall();
-            };
-          })
-          .catch((err) => console.error("Failed to get microphone audio", err));
-      })
-      .catch((err) => console.error("Failed to get local stream", err));
+      if (myVideo.current) {
+        myVideo.current.srcObject = combinedStream;
+      }
+
+      startRecording(combinedStream); // Start recording with the combined stream
+      startTimer(); // Start the timer
+      setIsSharing(true);
+
+      // Stop sharing automatically when the user stops sharing the screen
+      // Stop sharing automatically when the user stops sharing the screen
+      screenStream.getVideoTracks()[0].onended = () => {
+        if (
+          mediaRecorderRef.current &&
+          mediaRecorderRef.current.state !== "inactive"
+        ) {
+          mediaRecorderRef.current.stop();
+        }
+        endCall();
+      };
+    } catch (err) {
+      console.error("Error starting call", err);
+    }
   };
 
   const startRecording = (stream: MediaStream) => {
     recordedChunks.current = [];
-    const options = { mimeType: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' }; // Include 'opus' for audio
+
     if (MediaRecorder.isTypeSupported(options.mimeType)) {
       console.log("Codec supported");
     } else {
@@ -161,7 +183,7 @@ const App: React.FC = () => {
 
     const dataRequestInterval = setInterval(() => {
       if (mediaRecorder && mediaRecorder.state === "recording") {
-        mediaRecorder.requestData(); // Request data every 10 seconds
+        mediaRecorder.requestData(); // Request data every 5 seconds
       } else {
         clearInterval(dataRequestInterval); // Clear interval if not recording
       }
@@ -178,7 +200,9 @@ const App: React.FC = () => {
       if (recordedChunks.current.length > 0) {
         await saveRecording(); // Save the recording when it stops
         // Increment the part number **after** saving
-        partNumberRef.current += 1;
+        if (maxTime > 0) {
+          partNumberRef.current += 1;
+        }
         clearInterval(dataRequestInterval);
       }
     };
@@ -198,30 +222,41 @@ const App: React.FC = () => {
       }
     }
   };
-  // Function to format bytes into a human-readable format
-  const formatBytes = (bytes: number, decimals = 2) => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
-  };
 
   const saveRecording = async () => {
-    const blob = new Blob(recordedChunks.current, { type: "video/webm" });
-    const webmUrl = URL.createObjectURL(blob);
+    const blob = new Blob(recordedChunks.current, { type: options.mimeType });
 
-    // Trigger download for the current part
-    const webmLink = document.createElement("a");
-    webmLink.style.display = "none";
-    webmLink.href = webmUrl;
-    webmLink.download = `${fileName}-part-${partNumberRef.current}.webm`; // Part number included
-    document.body.appendChild(webmLink);
-    webmLink.click();
-    window.URL.revokeObjectURL(webmUrl);
+    // Prepare form data
+    const formData = new FormData();
+    formData.append("videoBlob", blob, `${fileName}.webm`);
 
-    // Clear the current recording chunks for the next part
+    try {
+      const response = await fetch("/api/convert", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to convert video");
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const mp4Blob = new Blob([arrayBuffer], { type: "video/mp4" });
+      const mp4Url = URL.createObjectURL(mp4Blob);
+
+      // Trigger download
+      const link = document.createElement("a");
+      link.style.display = "none";
+      link.href = mp4Url;
+      link.download = `${fileName}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      window.URL.revokeObjectURL(mp4Url);
+    } catch (error) {
+      console.error("Error converting video:", error);
+    }
+
+    // Clear the current recording chunks
     recordedChunks.current = [];
   };
 
@@ -239,7 +274,6 @@ const App: React.FC = () => {
     stopTimer();
     setIsSharing(false);
   };
-
   return (
     <Box sx={{ width: "100%", padding: 2 }}>
       <h1>Your Peer ID: {peerId}</h1>
