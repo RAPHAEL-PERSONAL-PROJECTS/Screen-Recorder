@@ -18,4 +18,4 @@ Download the out.zip and copy the contents to the public folder of your nodejs
 
 ## Some Pictures
 
-![alt text](images\sample.png)
+![alt text](.\images\sample.png)
