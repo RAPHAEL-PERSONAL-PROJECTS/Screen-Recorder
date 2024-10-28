@@ -9,6 +9,8 @@ import {
   Select,
   MenuItem,
   Typography,
+  Checkbox,
+  FormControlLabel,
 } from "@mui/material";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import Peer, { MediaConnection } from "peerjs";
@@ -29,8 +31,8 @@ const options = { mimeType };
 
 const App: React.FC = () => {
   const [peerId, setPeerId] = useState<string | null>(null);
-
   const [maxTime, setMaxTime] = useState<number>(0); // Initial max time is "No Limit"
+  const [downloadAsWebM, setDownloadAsWebM] = useState<boolean>(false); // Checkbox state
   const recordingSizeRef = useRef<number>(0);
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -155,7 +157,6 @@ const App: React.FC = () => {
       setIsSharing(true);
 
       // Stop sharing automatically when the user stops sharing the screen
-      // Stop sharing automatically when the user stops sharing the screen
       screenStream.getVideoTracks()[0].onended = () => {
         if (
           mediaRecorderRef.current &&
@@ -226,34 +227,46 @@ const App: React.FC = () => {
   const saveRecording = async () => {
     const blob = new Blob(recordedChunks.current, { type: options.mimeType });
 
-    // Prepare form data
-    const formData = new FormData();
-    formData.append("videoBlob", blob, `${fileName}.webm`);
-
-    try {
-      const response = await fetch("/api/convert", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to convert video");
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const mp4Blob = new Blob([arrayBuffer], { type: "video/mp4" });
-      const mp4Url = URL.createObjectURL(mp4Blob);
-
-      // Trigger download
+    if (downloadAsWebM) {
+      // Directly download as WebM
+      const webmUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.style.display = "none";
-      link.href = mp4Url;
-      link.download = `${fileName}.mp4`;
+      link.href = webmUrl;
+      link.download = `${fileName}.webm`;
       document.body.appendChild(link);
       link.click();
-      window.URL.revokeObjectURL(mp4Url);
-    } catch (error) {
-      console.error("Error converting video:", error);
+      window.URL.revokeObjectURL(webmUrl);
+    } else {
+      // Convert to MP4 using API
+      const formData = new FormData();
+      formData.append("videoBlob", blob, `${fileName}.webm`);
+
+      try {
+        const response = await fetch("/api/convert", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to convert video");
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const mp4Blob = new Blob([arrayBuffer], { type: "video/mp4" });
+        const mp4Url = URL.createObjectURL(mp4Blob);
+
+        // Trigger download
+        const link = document.createElement("a");
+        link.style.display = "none";
+        link.href = mp4Url;
+        link.download = `${fileName}.mp4`;
+        document.body.appendChild(link);
+        link.click();
+        window.URL.revokeObjectURL(mp4Url);
+      } catch (error) {
+        console.error("Error converting video:", error);
+      }
     }
 
     // Clear the current recording chunks
@@ -274,6 +287,7 @@ const App: React.FC = () => {
     stopTimer();
     setIsSharing(false);
   };
+
   return (
     <Box sx={{ width: "100%", padding: 2 }}>
       <h1>Your Peer ID: {peerId}</h1>
@@ -312,6 +326,17 @@ const App: React.FC = () => {
           <Button variant="contained" onClick={startCall} disabled={isSharing}>
             Start Recording
           </Button>
+        </Grid>
+        <Grid>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={downloadAsWebM}
+                onChange={(e) => setDownloadAsWebM(e.target.checked)}
+              />
+            }
+            label="Download as WebM"
+          />
         </Grid>
       </Grid>
 
